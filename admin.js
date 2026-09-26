@@ -39,7 +39,7 @@ function render() {
   const sum=ClowderLedger.summarize(snapshot.orders,snapshot.settlements,$('day').value);
   $('summary').replaceChildren();
   const bankDay=Object.entries(sum.accounts).filter(([a])=>a!=='Efectivo').reduce((n,[,v])=>n+v.today,0);
-  for(const [label,value] of [['Pendiente para Fernanda',sum.pending],['Transferencias del día',bankDay],['Efectivo del día',sum.accounts.Efectivo.today],['Devoluciones pendientes',sum.refunds]]){const card=element('div',undefined,'card');card.append(element('span',label),element('strong',money(value)));$('summary').append(card);}
+  for(const [label,value] of [['Transferencias pendientes para Fernanda',sum.pending],['Transferencias del día',bankDay],['Efectivo del día · latita de Tea',sum.accounts.Efectivo.today],['Devoluciones pendientes',sum.refunds]]){const card=element('div',undefined,'card');card.append(element('span',label),element('strong',money(value)));$('summary').append(card);}
   $('accounts').replaceChildren(); for(const [name,v] of Object.entries(sum.accounts)){const row=element('tr');[name,money(v.today),money(v.total)].forEach(t=>row.append(element('td',t)));$('accounts').append(row);}
   $('orders').replaceChildren();
   const query=$('search').value.toLowerCase();
