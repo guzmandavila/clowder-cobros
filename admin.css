@@ -18,3 +18,5 @@ tbody tr.account--cash{background:#e7f2ff;color:#174b78}
 #settlements p.settlement--void{color:var(--muted,#716456)}
 @media(max-width:850px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.card:nth-child(n+4){grid-column:span 1}.card:last-child{grid-column:span 2}}
 @media(max-width:550px){.cards{grid-template-columns:minmax(0,1fr)}.card,.card:nth-child(n+4),.card:last-child{grid-column:span 1}}
+
+.table-scroll{overflow-x:auto;margin-bottom:1rem}.table-scroll table{min-width:960px}.table-scroll th,.table-scroll td{white-space:nowrap}#cashSummary{margin-bottom:1rem}#weeksTitle,#cashTitle{margin-top:2rem}#cashHistory{max-height:360px;overflow:auto}#manualChange{font-weight:700}section[aria-labelledby]{border-top:1px solid #555;padding-top:1rem;margin-top:2rem}

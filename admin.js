@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const banks = ['Guayaquil','Pichincha','Bolivariano','Pacífico','Produbanco','Efectivo'];
 const money = cents => new Intl.NumberFormat('es-EC',{style:'currency',currency:'USD'}).format(cents/100);
 const date = iso => new Date(iso).toLocaleString('es-EC',{timeZone:'America/Guayaquil'});
-let token = '', snapshot = null, busy = false, settlementAttempt = null, manualAttempt = null;
+let token = '', snapshot = null, busy = false, settlementAttempt = null, manualAttempt = null, cashAttempt = null;
 $('day').value = ClowderLedger.day(new Date().toISOString());
 function element(tag,text,className) { const el=document.createElement(tag); if(text !== undefined) el.textContent=text; if(className) el.className=className; return el; }
 async function api(path, data) {
@@ -29,13 +29,15 @@ $('manual').onsubmit=e=>{
  if(!name||!Number.isSafeInteger(totalCents)||totalCents<=0)return;
  if(!confirm(`¿Ya recibiste ${money(totalCents)} en ${account} y este cobro no está registrado?`))return;
  run(async()=>{
-  const signature=JSON.stringify({name,totalCents,account});
+  const tenderCents=account==='Efectivo'?Math.round(Number($('manualTender').value||$('manualAmount').value)*100):undefined;
+  const signature=JSON.stringify({name,totalCents,account,tenderCents});
   if(!manualAttempt||manualAttempt.signature!==signature)manualAttempt={signature,code:'CL-MANUAL-'+crypto.randomUUID().toUpperCase(),receiptKey:Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('')};
-  await api('/api/manual',{code:manualAttempt.code,receiptKey:manualAttempt.receiptKey,name,totalCents,method:account==='Efectivo'?'efectivo':'transferencia',bank:account==='Efectivo'?'':account,details:'Cobro recibido fuera del menú · '+name});
-  $('manual').reset();manualAttempt=null;await refresh();
+  await api('/api/manual',{code:manualAttempt.code,receiptKey:manualAttempt.receiptKey,name,totalCents,tenderCents,method:account==='Efectivo'?'efectivo':'transferencia',bank:account==='Efectivo'?'':account,details:'Cobro recibido fuera del menú · '+name});
+  $('manual').reset();updateManualChange();manualAttempt=null;await refresh();
  });
 };
 function render() {
+  renderFinance();
   const sum=ClowderLedger.summarize(snapshot.orders,snapshot.settlements,$('day').value);
   $('summary').replaceChildren();
   const bankDay=Object.entries(sum.accounts).filter(([a])=>a!=='Efectivo').reduce((n,[,v])=>n+v.today,0);
@@ -52,12 +54,17 @@ function render() {
   for(const o of snapshot.orders.filter(o=>($('filter').value==='all'||o.status===$('filter').value)&&(o.code+' '+o.payload.name).toLowerCase().includes(query))) {
     const p=o.payload, article=element('article'); article.append(element('h3',p.name+' · '+money(o.cents ?? p.totalCents)),element('p',o.code+' · '+date(o.created_at),'muted'));
     article.append(element('p',({pending:'Pendiente de confirmar',paid:'Cobrado',cancelled:'Cancelado'})[o.status]+' · '+(o.account || (p.method==='efectivo'?'Efectivo':p.bank))));
+    if(o.account==='Efectivo'&&o.tender_cents!=null)article.append(element('p','Recibido: '+money(o.tender_cents)+' · Cambio entregado: '+money(o.tender_cents-o.cents)));
     const details=element('details');details.append(element('summary','Ver pedido'),element('pre',p.details));article.append(details);
     if(o.status==='pending') {
       const form=element('form'),label=element('label','Cuenta donde recibiste el pago'),select=element('select'),amountLabel=element('label','Monto recibido ($)'),input=element('input');
       banks.forEach(b=>{const option=element('option',b);option.value=b;select.append(option);});select.value=p.method==='efectivo'?'Efectivo':p.bank;label.append(select);
-      Object.assign(input,{type:'number',min:'0.01',max:'100000',step:'0.01',required:true,value:(p.totalCents/100).toFixed(2)});amountLabel.append(input);form.append(label,amountLabel,element('button','Confirmar cobro'));
-      form.onsubmit=e=>{e.preventDefault();const cents=Math.round(Number(input.value)*100);if(!confirm(`¿Recibiste ${money(cents)} en ${select.value}?`))return;run(async()=>{await api(`/api/orders/${o.code}/confirm`,{account:select.value,cents});await refresh();});};article.append(form);
+      Object.assign(input,{type:'number',min:'0.01',max:'100000',step:'0.01',required:true,value:(p.totalCents/100).toFixed(2)});amountLabel.append(input);
+      const tenderLabel=element('label','Efectivo recibido del cliente ($)'),receivedInput=element('input'),change=element('p');
+      Object.assign(receivedInput,{type:'number',min:'0.01',max:'100000',step:'0.01'});tenderLabel.append(receivedInput);
+      const updateChange=()=>{tenderLabel.hidden=select.value!=='Efectivo';const value=Math.round(Number(receivedInput.value||input.value)*100),price=Math.round(Number(input.value)*100);receivedInput.setCustomValidity(select.value==='Efectivo'&&value<price?'El efectivo no alcanza.':'');change.textContent=select.value==='Efectivo'?'Cambio a entregar: '+money(Math.max(0,value-price))+'. La caja suma '+money(price)+'.':'';};
+      select.onchange=input.oninput=receivedInput.oninput=updateChange;updateChange();form.append(label,amountLabel,tenderLabel,change,element('button','Confirmar cobro'));
+      form.onsubmit=e=>{e.preventDefault();const cents=Math.round(Number(input.value)*100);if(!confirm(`¿Recibiste ${money(cents)} en ${select.value}?`))return;run(async()=>{await api(`/api/orders/${o.code}/confirm`,{account:select.value,cents,...(select.value==='Efectivo'?{tenderCents:Math.round(Number(receivedInput.value||input.value)*100)}:{})});await refresh();});};article.append(form);
     }
     if(o.status!=='cancelled') { const button=element('button','Cancelar pedido','danger');button.type='button';button.onclick=()=>{if(confirm(o.status==='paid'?'¿Cancelar este pedido cobrado? Se excluirá del cierre y quedará pendiente la devolución.':'¿Cancelar este pedido? No se sumará al cierre.'))run(async()=>{await api(`/api/orders/${o.code}/cancel`,{});await refresh();});};article.append(button); }
     if(o.status==='cancelled'&&o.paid_at){article.append(element('p',o.refunded_at?'Devolución registrada: '+date(o.refunded_at):'Debes devolver '+money(o.cents)+' al cliente.'));if(!o.refunded_at){const button=element('button','Confirmar devolución realizada');button.onclick=()=>{if(confirm('¿Ya devolviste '+money(o.cents)+' al cliente?'))run(async()=>{await api(`/api/orders/${o.code}/refund`,{});await refresh();});};article.append(button);}}
@@ -71,3 +78,30 @@ function render() {
   }));
 }
 setInterval(()=>{if(token&&!busy&&!document.hidden&&!document.activeElement.matches('input,select,button'))run(refresh);},60000);
+
+function updateManualChange(){
+ const cash=$('manualAccount').value==='Efectivo';$('manualTenderLabel').hidden=!cash;
+ const amount=Math.round(Number($('manualAmount').value)*100),received=Math.round(Number($('manualTender').value||$('manualAmount').value)*100);
+ $('manualTender').setCustomValidity(cash&&received<amount?'El efectivo no alcanza.':'');
+ $('manualChange').textContent=cash?'Cambio a entregar: '+money(Math.max(0,received-amount))+'. La caja suma '+money(amount)+'.':'';
+}
+for(const id of ['manualAmount','manualTender','manualAccount'])$(id).addEventListener('input',updateManualChange);
+$('cashForm').onsubmit=e=>{e.preventDefault();run(async()=>{
+ const kind=$('cashKind').value,cents=Math.round(Number($('cashAmount').value)*100),note=$('cashNote').value.trim(),expected=ClowderLedger.cash(snapshot.orders,snapshot.cashMovements).balance;
+ const signature=JSON.stringify({kind,cents,note});
+ if(!cashAttempt||cashAttempt.signature!==signature)cashAttempt={signature,id:crypto.randomUUID(),expected};
+ if(!confirm(kind==='count'?`¿Contaste ${money(cents)} en total, incluyendo los cobros recientes? Se ajustará la diferencia con el saldo registrado.`:`¿Registrar ${kind==='in'?'entrada':'salida'} de ${money(cents)}?`))return;
+ await api('/api/cash',{id:cashAttempt.id,kind,cents,note,expected:cashAttempt.expected});cashAttempt=null;$('cashForm').reset();await refresh();
+});};
+$('refresh').onclick=()=>run(async()=>{await refresh();cashAttempt=null;});
+function weekLabel(key){const d=new Date(key+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+1);const start=d.toISOString().slice(0,10);d.setUTCDate(d.getUTCDate()+5);return start+' a '+d.toISOString().slice(0,10);}
+function renderFinance(){
+ const c=ClowderLedger.cash(snapshot.orders,snapshot.cashMovements);$('cashSummary').replaceChildren();
+ for(const [label,value] of [['Saldo de caja',c.balance],['Reservado para devoluciones',c.reserved],['Efectivo disponible',c.available]]){const card=element('div',undefined,'card card--cash');card.append(element('span',label),element('strong',money(value)));$('cashSummary').append(card);}
+ $('cashHint').textContent=c.initialized?'El saldo suma los cobros y movimientos, y resta las devoluciones realizadas. El disponible también reserva las devoluciones pendientes.':'Falta contar la latita: estos valores solo incluyen el efectivo registrado. Guarda el total físico para incluir lo que ya tenías.';
+ $('cashHistory').replaceChildren(...(snapshot.cashMovements||[]).map(m=>element('p',date(m.created_at)+' · '+({count:'Conteo',in:'Entrada',out:'Salida'})[m.kind]+' · '+money(m.delta)+(m.counted_cents===null?'':' · Total contado: '+money(m.counted_cents))+' · '+m.note)));
+ $('weeks').replaceChildren(...ClowderLedger.weekly(snapshot.orders).map(w=>{const tr=element('tr');[weekLabel(w.week)+(w.current?' · Parcial':''),money(w.cash),money(w.bank),money(w.gross),money(w.refunds),money(w.net),String(w.count),money(w.average),w.current?'En curso':w.change===null?'Sin base':(w.change>0?'+':'')+w.change.toFixed(1)+'%',money(w.outside)].forEach(v=>tr.append(element('td',v)));return tr;}));
+}
+function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=element('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+$('backup').onclick=()=>run(async()=>{const data=await api('/api/backup');download('clowder-respaldo-'+ClowderLedger.day(new Date().toISOString())+'.json',JSON.stringify(data,null,2),'application/json');});
+$('exportWeeks').onclick=()=>{const rows=[['Semana martes a domingo','Estado','Efectivo','Transferencias','Cobrado','Devoluciones','Neto','Pedidos','Promedio','Variación %','Lunes antes de 18:00'],...ClowderLedger.weekly(snapshot.orders).map(w=>[weekLabel(w.week),w.current?'Parcial':'Completa',...[w.cash,w.bank,w.gross,w.refunds,w.net].map(v=>(v/100).toFixed(2)),w.count,(w.average/100).toFixed(2),w.current||w.change===null?'':w.change.toFixed(1),(w.outside/100).toFixed(2)])];download('clowder-semanas.csv','\ufeff'+rows.map(r=>r.join(';')).join('\r\n'),'text/csv;charset=utf-8');};
