@@ -39,6 +39,13 @@ $('manual').onsubmit=e=>{
 function render() {
   renderFinance();
   const sum=ClowderLedger.summarize(snapshot.orders,snapshot.settlements,$('day').value);
+  $('dailySummary').replaceChildren();
+  const pendingOrders=snapshot.orders.filter(o=>o.status==='pending').length;
+  const cashToday=sum.accounts.Efectivo.today;
+  const transfersToday=Object.entries(sum.accounts).filter(([a])=>a!=='Efectivo').reduce((n,[,v])=>n+v.today,0);
+  for(const [label,value,note] of [['Pedidos por confirmar',String(pendingOrders),'Pendientes de todos los días'],['Efectivo cobrado',money(cashToday),'Fecha de consulta'],['Transferencias cobradas',money(transfersToday),'Fecha de consulta']]){
+    const card=element('div',undefined,'card');card.append(element('span',label),element('strong',value),element('small',note));$('dailySummary').append(card);
+  }
   $('summary').replaceChildren();
   const bankDay=Object.entries(sum.accounts).filter(([a])=>a!=='Efectivo').reduce((n,[,v])=>n+v.today,0);
   for(const [label,value,tone,note] of [
@@ -105,3 +112,17 @@ function renderFinance(){
 function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=element('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('backup').onclick=()=>run(async()=>{const data=await api('/api/backup');download('clowder-respaldo-'+ClowderLedger.day(new Date().toISOString())+'.json',JSON.stringify(data,null,2),'application/json');});
 $('exportWeeks').onclick=()=>{const rows=[['Semana martes a domingo','Estado','Efectivo','Transferencias','Cobrado','Devoluciones','Neto','Pedidos','Promedio','Variación %','Lunes antes de 18:00'],...ClowderLedger.weekly(snapshot.orders).map(w=>[weekLabel(w.week),w.current?'Parcial':'Completa',...[w.cash,w.bank,w.gross,w.refunds,w.net].map(v=>(v/100).toFixed(2)),w.count,(w.average/100).toFixed(2),w.current||w.change===null?'':w.change.toFixed(1),(w.outside/100).toFixed(2)])];download('clowder-semanas.csv','\ufeff'+rows.map(r=>r.join(';')).join('\r\n'),'text/csv;charset=utf-8');};
+
+const workspaceTabs=['orders','accounting'];
+function selectWorkspaceTab(name,focus=false){
+ if(!workspaceTabs.includes(name))name='orders';
+ for(const key of workspaceTabs){const selected=key===name,tab=$('tab-'+key);tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;$('panel-'+key).hidden=!selected;}
+ if(focus)$('tab-'+name).focus();
+}
+for(const [index,key] of workspaceTabs.entries()){
+ const tab=$('tab-'+key);
+ tab.onclick=()=>{selectWorkspaceTab(key);history.replaceState(null,'','#'+(key==='accounting'?'contabilidad':'pedidos'));};
+ tab.onkeydown=e=>{let next;if(e.key==='ArrowRight'||e.key==='ArrowLeft')next=workspaceTabs[1-index];else if(e.key==='Home')next=workspaceTabs[0];else if(e.key==='End')next=workspaceTabs[1];else return;e.preventDefault();selectWorkspaceTab(next,true);history.replaceState(null,'','#'+(next==='accounting'?'contabilidad':'pedidos'));};
+}
+function tabFromHash(){selectWorkspaceTab(location.hash==='#contabilidad'?'accounting':'orders');}
+window.addEventListener('hashchange',tabFromHash);tabFromHash();
